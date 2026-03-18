@@ -1,6 +1,7 @@
 const Ticket = require("../models/Ticket");
 const User = require("../models/User");
 const emailService = require("../services/emailService");
+const auditService = require("../services/auditService");
 const logger = require("../middleware/logger");
 
 const populate = [
@@ -36,6 +37,20 @@ const createTicket = async (req, res, next) => {
       logger.error(`Email error on ticket create: ${err.message}`);
     });
 
+    // DynamoDB Audit Log
+    auditService.logAuditEvent({
+      ticketId: populated._id,
+      action: "TICKET_CREATED",
+      performedBy: req.user.email,
+      details: {
+        ticketId: populated.ticketId,
+        title: populated.title,
+        priority: populated.priority,
+        category: populated.category,
+        status: populated.status,
+      },
+    }).catch((err) => logger.error(`Audit log error: ${err.message}`));
+
     logger.info(`Ticket created: ${populated.ticketId} by ${req.user.email}`);
 
     res.status(201).json({ success: true, ticket: populated });
@@ -53,7 +68,6 @@ const getTickets = async (req, res, next) => {
 
     const filter = {};
 
-    // Users only see their own tickets; agents/admins see all
     if (req.user.role === "user") {
       filter.user = req.user._id;
     }
@@ -100,7 +114,6 @@ const getTicket = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "Ticket not found." });
     }
 
-    // Users can only see their own tickets
     if (req.user.role === "user" && ticket.user._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized." });
     }
@@ -122,7 +135,8 @@ const updateTicket = async (req, res, next) => {
       return res.status(404).json({ success: false, message: "Ticket not found." });
     }
 
-    // Users can only update their own tickets (and only title/desc/priority)
+    const previousStatus = ticket.status;
+
     if (req.user.role === "user") {
       if (ticket.user.toString() !== req.user._id.toString()) {
         return res.status(403).json({ success: false, message: "Not authorized." });
@@ -132,7 +146,6 @@ const updateTicket = async (req, res, next) => {
       if (description) ticket.description = description;
       if (priority) ticket.priority = priority;
     } else {
-      // Agent/admin can update everything
       const { status, assignedTo, priority, category } = req.body;
       if (status) ticket.status = status;
       if (assignedTo !== undefined) ticket.assignedTo = assignedTo || null;
@@ -152,6 +165,20 @@ const updateTicket = async (req, res, next) => {
     emailService.sendTicketUpdatedEmail(populated).catch((err) => {
       logger.error(`Email error on ticket update: ${err.message}`);
     });
+
+    // DynamoDB Audit Log
+    auditService.logAuditEvent({
+      ticketId: populated._id,
+      action: populated.status === "closed" ? "TICKET_CLOSED" : "TICKET_UPDATED",
+      performedBy: req.user.email,
+      details: {
+        ticketId: populated.ticketId,
+        title: populated.title,
+        previousStatus,
+        newStatus: populated.status,
+        priority: populated.priority,
+      },
+    }).catch((err) => logger.error(`Audit log error: ${err.message}`));
 
     logger.info(`Ticket updated: ${populated.ticketId} by ${req.user.email}`);
 
@@ -175,6 +202,17 @@ const deleteTicket = async (req, res, next) => {
     if (req.user.role === "user" && ticket.user.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Not authorized." });
     }
+
+    // DynamoDB Audit Log before delete
+    auditService.logAuditEvent({
+      ticketId: ticket._id,
+      action: "TICKET_DELETED",
+      performedBy: req.user.email,
+      details: {
+        ticketId: ticket.ticketId,
+        title: ticket.title,
+      },
+    }).catch((err) => logger.error(`Audit log error: ${err.message}`));
 
     await ticket.deleteOne();
     logger.info(`Ticket deleted: ${ticket.ticketId} by ${req.user.email}`);
@@ -211,6 +249,17 @@ const addComment = async (req, res, next) => {
     ticket.comments.push({ author: req.user._id, text: text.trim() });
     await ticket.save();
     const populated = await ticket.populate(populate);
+
+    // DynamoDB Audit Log
+    auditService.logAuditEvent({
+      ticketId: ticket._id,
+      action: "COMMENT_ADDED",
+      performedBy: req.user.email,
+      details: {
+        ticketId: ticket.ticketId,
+        comment: text.trim().substring(0, 100),
+      },
+    }).catch((err) => logger.error(`Audit log error: ${err.message}`));
 
     if (req.io) {
       req.io.emit("commentAdded", { ticket: populated });

@@ -1,26 +1,7 @@
-const nodemailer = require("nodemailer");
+const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const logger = require("../middleware/logger");
 
-let transporter = null;
-
-const getTransporter = () => {
-  if (transporter) return transporter;
-
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    logger.warn("Email credentials not configured. Emails will be skipped.");
-    return null;
-  }
-
-  transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
-
-  return transporter;
-};
+const ses = new SESClient({ region: process.env.AWS_REGION || "ap-south-1" });
 
 const statusColors = {
   open: "#3B82F6",
@@ -70,9 +51,28 @@ const htmlTemplate = (title, content) => `
 </html>
 `;
 
+const sendEmail = async ({ to, subject, html }) => {
+  try {
+    const command = new SendEmailCommand({
+      Source: process.env.EMAIL_FROM,
+      Destination: { ToAddresses: [to] },
+      Message: {
+        Subject: { Data: subject },
+        Body: { Html: { Data: html } },
+      },
+    });
+    await ses.send(command);
+    logger.info(`Email sent to ${to}`);
+  } catch (error) {
+    logger.error(`SES Error: ${error.message}`);
+  }
+};
+
 const sendTicketCreatedEmail = async (user, ticket) => {
-  const t = getTransporter();
-  if (!t) return;
+  if (!process.env.EMAIL_FROM) {
+    logger.warn("EMAIL_FROM not configured. Skipping email.");
+    return;
+  }
 
   const statusColor = statusColors[ticket.status] || "#3B82F6";
   const priorityColor = priorityColors[ticket.priority] || "#6B7280";
@@ -90,19 +90,18 @@ const sendTicketCreatedEmail = async (user, ticket) => {
     <p style="color:#888; font-size:13px">We typically respond within 24 hours. You'll receive updates via email.</p>
   `;
 
-  await t.sendMail({
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+  await sendEmail({
     to: user.email,
     subject: `[${ticket.ticketId}] Ticket Created: ${ticket.title}`,
     html: htmlTemplate("Ticket Created", content),
   });
-
-  logger.info(`Ticket created email sent to ${user.email}`);
 };
 
 const sendTicketUpdatedEmail = async (ticket) => {
-  const t = getTransporter();
-  if (!t || !ticket.user?.email) return;
+  if (!process.env.EMAIL_FROM || !ticket.user?.email) {
+    logger.warn("Email not configured or user email missing. Skipping.");
+    return;
+  }
 
   const statusColor = statusColors[ticket.status] || "#3B82F6";
 
@@ -117,14 +116,11 @@ const sendTicketUpdatedEmail = async (ticket) => {
     </div>
   `;
 
-  await t.sendMail({
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+  await sendEmail({
     to: ticket.user.email,
     subject: `[${ticket.ticketId}] Status Update: ${ticket.status.toUpperCase()}`,
     html: htmlTemplate("Ticket Updated", content),
   });
-
-  logger.info(`Ticket updated email sent to ${ticket.user.email}`);
 };
 
 module.exports = { sendTicketCreatedEmail, sendTicketUpdatedEmail };
