@@ -29,17 +29,9 @@ Traditional support systems often suffer from:
 
 ## 🏗️ Architecture  
 
-```
-User / Agent
-     ↓
-S3 (React Frontend)
-     ↓ API calls
-ALB (Application Load Balancer)
-     ↓
-ECS Fargate (Node.js Backend) ← ECR (Docker Image)
-     ↓           ↓          ↓           ↓
-MongoDB      DynamoDB      SES      CloudWatch
-Atlas       (Audit Logs)  (Emails)   (Logs)
+<p align="center">
+  <img src="assets/ticket.jpeg" alt="Architecture Diagram" width="900"/>
+</p>
 ```
 
 ---
