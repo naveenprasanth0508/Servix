@@ -30,7 +30,7 @@ Traditional support systems often suffer from:
 ## 🏗️ Architecture  
 
 <p align="center">
-  <img src="assets/ticket.jpeg" alt="Architecture Diagram" width="800"/>
+  <img src="ticket-system/assets/ticket.jpeg" alt="Architecture Diagram" width="900"/>
 </p>
 
 ---
